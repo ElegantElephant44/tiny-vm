@@ -16,7 +16,7 @@
   </header>
   <main>
     <div class="toolbar">
-      <div class="transport"><button id="run" class="primary" disabled>▶ Run</button><button id="step" disabled>Step →</button><button id="reset" disabled>↺ Reset</button></div>
+      <div class="transport"><button id="run" class="primary" disabled>▶ Run</button><button id="back" disabled>← Back</button><button id="step" disabled>Step →</button><button id="reset" disabled>↺ Reset</button></div>
       <label class="speed" for="speed">Speed <input id="speed" type="range" min="1" max="12" value="2"><output id="speed-value">2 steps/s</output></label>
       <div class="runtime"><span id="status" class="status" aria-live="polite">Loading Go engine…</span><span><b id="step-count">0</b> instructions</span></div>
     </div>
@@ -50,7 +50,10 @@
             <div class="register" id="reg-2"><span class="reg-label">r2 <span>register</span></span><strong id="r2">00</strong><span class="reg-sub" id="r2-sub">0 decimal</span></div>
             <div class="register output-register" id="output-register"><span class="reg-label">M[00] <span>output</span></span><strong id="out">00</strong><span class="reg-sub" id="out-sub">0 decimal</span></div>
           </div>
-          <div class="execution"><span id="execution-label">NEXT INSTRUCTION</span><code id="next-instruction">—</code><p id="explanation" aria-live="polite">Loading the machine…</p></div>
+          <div class="execution">
+            <span>LAST STEP</span><p id="explanation" aria-live="polite">Loading the machine…</p>
+            <span id="execution-label">NEXT INSTRUCTION</span><code id="next-instruction">—</code>
+          </div>
         </section>
         <section class="listing-section">
           <div class="section-heading"><h2>Instructions</h2><span id="program-size" class="eyebrow">0 BYTES</span></div>
@@ -60,6 +63,10 @@
         <section class="memory-section">
           <div class="section-heading"><h2>Memory <span>256 × 8 bits</span></h2><span class="eyebrow">HEX / 00–FF</span></div>
           <div class="memory-container"><div id="memory" class="memory" role="group" aria-label="Memory bytes, hexadecimal"></div></div>
+          <div class="memory-controls">
+            <button id="memory-toggle" type="button" aria-controls="memory" aria-expanded="false">Show all 256 bytes</button>
+            <span id="memory-summary" aria-live="polite"></span>
+          </div>
           <div class="legend"><span><i class="key data-key"></i>Data 00–07</span><span><i class="key code-key"></i>Program</span><span><i class="key pc-key"></i>PC / operands</span><span><i class="key access-key"></i>Read</span><span><i class="key write-key"></i>Written</span></div>
           <div id="inspector" class="inspector" aria-live="polite"></div>
         </section>

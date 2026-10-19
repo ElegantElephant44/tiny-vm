@@ -5,6 +5,8 @@ import { webcrypto } from 'node:crypto';
 import { assemble } from '../dist/assembler.js';
 import { examples } from '../dist/examples.js';
 import { instructionListing } from '../dist/listing.js';
+import { visibleMemoryRows } from '../dist/memory-view.js';
+import { ExecutionTrace, TRACE_LIMIT } from '../dist/execution-trace.js';
 if (!globalThis.crypto) globalThis.crypto = webcrypto;
 await import('../dist/wasm_exec.js');
 const go = new globalThis.Go();
@@ -104,4 +106,89 @@ test('listing: decode changed instruction lengths and malformed end-of-memory by
   assert.equal(instructionListing(program, memory, 255).at(-1).text, 'unknown 0x00');
   memory[255] = 1;
   assert.deepEqual(instructionListing(program, memory, 255).at(-1).bytes, [1]);
+});
+
+const compactView = (changes = {}) => ({
+  memory: new Array(256).fill(0), programLength: 13, pc: 8,
+  instructionLength: 3, selected: 0, accessed: [], ...changes,
+});
+test('compact memory: retain complete data and program rows', () => {
+  assert.deepEqual([...visibleMemoryRows(compactView(), false)].sort(), [0, 1]);
+  assert.deepEqual([...visibleMemoryRows(compactView({ programLength: 1 }), false)], [0]);
+  assert.equal(visibleMemoryRows(compactView({ programLength: 248 }), false).size, 16);
+});
+test('compact memory: include current instruction operands and selected cells', () => {
+  const rows = visibleMemoryRows(compactView({ pc: 127, selected: 255 }), false);
+  for (const row of [0, 1, 7, 8, 15]) assert.ok(rows.has(row));
+});
+test('compact memory: retain nonzero data and zero-valued accessed cells', () => {
+  const view = compactView({ accessed: [100, 200] });
+  view.memory[160] = 42;
+  const rows = visibleMemoryRows(view, false);
+  for (const address of [100, 160, 200]) assert.ok(rows.has(Math.floor(address / 16)));
+});
+test('expanded memory: show every row without modifying machine memory', () => {
+  const view = compactView();
+  const before = [...view.memory];
+  assert.deepEqual([...visibleMemoryRows(view, true)], Array.from({ length: 16 }, (_, i) => i));
+  assert.deepEqual(view.memory, before);
+  assert.equal(visibleMemoryRows(view, false).size, 2);
+});
+
+test('Go WASM: rewind halt, store, and registers, then replay', () => {
+  const memory = new Uint8Array(256);
+  memory[1] = 42;
+  memory.set(assemble('load r1 1\nstore r1 0\nhalt').bytes, 8);
+  const states = [call('reset', memory), call('step'), call('step'), call('step')];
+  assert.equal(states[3].halted, true);
+  for (let i = 2; i >= 0; i--) assert.deepEqual(call('back'), states[i]);
+  assert.deepEqual(call('back'), states[0]);
+  assert.deepEqual([call('step'), call('step'), call('step')], states.slice(1));
+  const reset = call('reset', memory);
+  assert.equal(reset.historyDepth, 0);
+  assert.deepEqual(call('back'), reset);
+});
+
+test('Go WASM: failed steps add no undo state', () => {
+  const memory = new Uint8Array(256);
+  memory.set([7, 100], 8);
+  const initial = call('reset', memory);
+  const jumped = call('step');
+  assert.ok(JSON.parse(globalThis.vmCall('step')).error);
+  assert.deepEqual(call('back'), initial);
+  assert.equal(jumped.historyDepth, 1);
+});
+
+test('execution trace: rewind restores highlights and zero-valued memory access', () => {
+  const trace = new ExecutionTrace(1000);
+  const entry = (step, access) => ({ step, pc: 8, instruction: 'store r1 200',
+    changes: '', description: `step ${step}`, ...access });
+  trace.push(entry(1, { read: 1 }));
+  trace.push(entry(2, { write: 200 }));
+  trace.push(entry(3, { read: 200 }));
+  trace.back();
+  assert.equal(trace.latest.write, 200);
+  assert.ok(trace.accessedMemory.has(200));
+  trace.back();
+  assert.equal(trace.latest.read, 1);
+  assert.equal(trace.accessedMemory.has(200), false);
+  assert.ok(trace.accessedMemory.has(1));
+  trace.back();
+  assert.equal(trace.latest, undefined);
+  assert.equal(trace.accessedMemory.size, 0);
+});
+
+test('execution trace: retain older visible entries across the undo limit', () => {
+  const trace = new ExecutionTrace(1000);
+  for (let step = 1; step <= 1200; step++) {
+    trace.push({ step, pc: 8, instruction: 'jump 8', changes: '', description: `step ${step}`,
+      read: step === 1 ? 200 : undefined });
+  }
+  for (let i = 0; i < 1000; i++) trace.back();
+  assert.equal(trace.latest.step, 200);
+  assert.equal(trace.visible.length, TRACE_LIMIT);
+  assert.equal(trace.visible.at(-1).step, 101);
+  assert.ok(trace.accessedMemory.has(200), 'access before retained history must remain visible');
+  trace.push({ step: 201, pc: 8, instruction: 'halt', changes: '', description: 'new forward path' });
+  assert.equal(trace.visible[0].description, 'new forward path');
 });

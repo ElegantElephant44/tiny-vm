@@ -109,9 +109,9 @@ textarea { display: block; }
 .reg-label > span { font-size: 9px; }
 .register strong { font-size: 24px; line-height: 1.15; margin: 5px 0 3px; }
 .reg-sub { font-size: 9px; }
-.execution { padding: 12px 0; grid-template-columns: 140px 1fr; }
+.execution { padding: 12px 0; grid-template-columns: 140px 1fr; row-gap: 8px; }
 .execution code { font-size: 12px; }
-.execution p { margin-top: 6px; font-size: 11px; min-height: 0; }
+.execution p { grid-column: 2; margin: 0; font-size: 11px; min-height: 0; }
 @media (max-width: 600px) {
   .register { padding: 7px 8px; }
   .register strong { font-size: 22px; margin: 4px 0 2px; }
@@ -122,3 +122,13 @@ textarea { display: block; }
 
 #source { font-size: 12px; }
 #example { font-size: 12px; }
+
+.memory [hidden] { display: none; }
+.memory-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin-top: 10px; }
+.memory-controls button { font-size: 10px; padding: 7px 10px; }
+#memory-summary { font: 9px var(--mono); color: var(--muted); }
+
+@media (max-width: 600px) {
+  .transport { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); width: 100%; }
+  .transport button { min-width: 0; padding: 10px 6px; font-size: 11px; }
+}

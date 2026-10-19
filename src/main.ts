@@ -1,7 +1,12 @@
 import { assemble, decode, hex, OPS, type Program } from './assembler.js';
 import { examples, type Example } from './examples.js';
 import { instructionListing } from './listing.js';
-interface State { memory: number[]; registers: [number, number, number]; halted: boolean; steps: number }
+import { visibleMemoryRows } from './memory-view.js';
+import { ExecutionTrace } from './execution-trace.js';
+interface State {
+  memory: number[]; registers: [number, number, number]; halted: boolean; steps: number;
+  historyDepth: number; historyLimit: number;
+}
 interface GoRuntime { importObject: WebAssembly.Imports; run(instance: WebAssembly.Instance): Promise<void> }
 declare global { interface Window { Go: new () => GoRuntime; vmCall: (command: string, memory?: Uint8Array) => string } }
 const $ = <T extends HTMLElement>(id: string) => {
@@ -13,6 +18,7 @@ const source = $<HTMLTextAreaElement>('source');
 const select = $<HTMLSelectElement>('example');
 const runButton = $<HTMLButtonElement>('run');
 const stepButton = $<HTMLButtonElement>('step');
+const backButton = $<HTMLButtonElement>('back');
 const resetButton = $<HTMLButtonElement>('reset');
 const assembleButton = $<HTMLButtonElement>('assemble');
 const inputs = [0, 1, 2].map(i => $<HTMLInputElement>(`input-${i}`));
@@ -20,7 +26,7 @@ let ready = false;
 let state: State | undefined;
 let program: Program | undefined;
 let baseline: Uint8Array | undefined;
-let chosen: Example = examples[0]!;
+let chosen: Example | undefined = examples[0]!;
 let expected: number | undefined;
 let selected = 0;
 let dirty = false;
@@ -28,9 +34,10 @@ let fault = false;
 let running = false;
 let timer: ReturnType<typeof setTimeout> | undefined;
 let runStart = 0;
-let lastRead: number | undefined;
-let lastWrite: number | undefined;
+let memoryExpanded = false;
+let trace = new ExecutionTrace(0);
 const memoryButtons: HTMLButtonElement[] = [];
+const memoryRowLabels: HTMLElement[] = [];
 const memoryRoot = $('memory');
 for (let row = -1; row < 16; row++) {
   for (let column = -1; column < 16; column++) {
@@ -39,6 +46,7 @@ for (let row = -1; row < 16; row++) {
       label.className = row < 0 ? 'col-label' : 'row-label';
       label.textContent = row < 0 ? (column < 0 ? '' : column.toString(16).toUpperCase()) : hex(row * 16);
       memoryRoot.append(label);
+      if (row >= 0) memoryRowLabels.push(label);
     } else {
       const address = row * 16 + column;
       const button = document.createElement('button');
@@ -51,6 +59,14 @@ for (let row = -1; row < 16; row++) {
 for (const example of examples) {
   const option = document.createElement('option');
   option.value = example.id; option.textContent = example.name; select.append(option);
+}
+const customOption = document.createElement('option');
+customOption.value = 'custom'; customOption.textContent = 'Custom program'; select.append(customOption);
+function selectCustom() {
+  chosen = undefined;
+  expected = undefined;
+  select.value = 'custom';
+  $('example-description').textContent = 'Your assembly and initial memory. Assemble & load to apply changes.';
 }
 function engine(command: string, memory?: Uint8Array): State {
   const result = JSON.parse(window.vmCall(command, memory)) as State & { error?: string };
@@ -68,6 +84,8 @@ function controls() {
   runButton.textContent = running ? 'Ⅱ Pause' : '▶ Run';
   runButton.disabled = !ready || !state || state.halted || dirty || fault;
   stepButton.disabled = runButton.disabled || running;
+  backButton.disabled = !ready || !state || dirty || state.historyDepth === 0;
+  backButton.title = `Step back one instruction. Keeps up to ${state?.historyLimit ?? 0} steps.`;
   resetButton.disabled = !ready || !baseline;
   assembleButton.disabled = !ready;
 }
@@ -77,7 +95,7 @@ function setStatus(text: string, isError = false) {
 }
 function stop() { running = false; clearTimeout(timer); timer = undefined; controls(); }
 function markDirty() {
-  stop(); dirty = true; error(); setStatus('Changes to load'); controls();
+  stop(); selectCustom(); dirty = true; error(); setStatus('Changes to load'); controls();
 }
 function load() {
   stop(); error();
@@ -94,11 +112,12 @@ function load() {
     memory.set(initial); memory.set(parsed.bytes, 8);
     const loaded = engine('reset', memory);
     baseline = memory; program = parsed; state = loaded;
-    expected = source.value.trim() === chosen.source.trim() && initial.every((v, i) => v === chosen.inputs[i]) ? chosen.expected : undefined;
-    dirty = false; fault = false; lastRead = undefined; lastWrite = undefined;
+    const example = chosen;
+    expected = example && source.value.trim() === example.source.trim() && initial.every((v, i) => v === example.inputs[i]) ? example.expected : undefined;
+    dirty = false; fault = false;
+    trace = new ExecutionTrace(state.historyLimit);
     source.scrollTop = 0;
-    $('trace').replaceChildren();
-    const empty = document.createElement('p'); empty.className = 'trace-empty'; empty.textContent = 'Each step leaves a trail here.'; $('trace').append(empty);
+    renderTrace();
     $('explanation').textContent = 'Ready. Step through the program or run it at your own pace.';
     $('program-size').textContent = `${parsed.bytes.length} BYTES`;
     setStatus('Ready'); render();
@@ -107,10 +126,17 @@ function load() {
   }
 }
 function populate() {
-  stop(); chosen = examples.find(e => e.id === select.value) || examples[0]!;
-  source.value = chosen.source;
-  inputs.forEach((input, i) => { input.value = String(chosen.inputs[i]); });
-  $('example-description').textContent = chosen.description;
+  stop();
+  const example = examples.find(e => e.id === select.value);
+  chosen = example;
+  if (!example) {
+    selectCustom();
+    setStatus(dirty ? 'Changes to load' : fault ? 'Execution stopped' : state?.halted ? 'Halted' : state?.steps ? 'Paused' : 'Ready', fault);
+    return;
+  }
+  source.value = example.source;
+  inputs.forEach((input, i) => { input.value = String(example.inputs[i]); });
+  $('example-description').textContent = example.description;
   if (ready) load();
 }
 function renderMemory() {
@@ -119,7 +145,13 @@ function renderMemory() {
   const opcode = state.memory[pc];
   const op = Object.values(OPS).find(op => op.code === opcode);
   const length = op ? 1 + op.kinds.length : 1;
+  const lastRead = trace.latest?.read;
+  const lastWrite = trace.latest?.write;
+  const rows = visibleMemoryRows({ memory: state.memory, programLength: program?.bytes.length || 0,
+    pc, instructionLength: length, selected, accessed: trace.accessedMemory }, memoryExpanded);
+  memoryRowLabels.forEach((label, row) => { label.hidden = !rows.has(row); });
   memoryButtons.forEach((button, address) => {
+    button.hidden = !rows.has(Math.floor(address / 16));
     button.textContent = hex(state!.memory[address]!);
     const classes = ['byte'];
     if (address < 8) classes.push('data');
@@ -133,6 +165,11 @@ function renderMemory() {
     button.setAttribute('aria-label', `Address ${hex(address)}, hexadecimal ${hex(state!.memory[address]!)}, decimal ${state!.memory[address]}${address === pc ? ', program counter' : ''}`);
     button.setAttribute('aria-pressed', String(address === selected));
   });
+  const toggle = $('memory-toggle');
+  toggle.textContent = memoryExpanded ? 'Show compact view' : 'Show all 256 bytes';
+  toggle.setAttribute('aria-expanded', String(memoryExpanded));
+  const summary = `${rows.size * 16} / 256 bytes${memoryExpanded ? '' : ' · unused rows hidden'}`;
+  if ($('memory-summary').textContent !== summary) $('memory-summary').textContent = summary;
   const value = state.memory[selected]!;
   $('inspector').replaceChildren();
   for (const [label, val] of [['ADDRESS', `0x${hex(selected)}`], ['HEX', hex(value)], ['DEC', value], ['BIN', value.toString(2).padStart(8, '0')]]) {
@@ -150,7 +187,7 @@ function render(previous?: State) {
   });
   $('out').textContent = hex(state.memory[0]!);
   $('out-sub').textContent = `${state.memory[0]} decimal`;
-  $('output-register').classList.toggle('changed', lastWrite === 0);
+  $('output-register').classList.toggle('changed', trace.latest?.write === 0);
   $('step-count').textContent = String(state.steps);
   $('execution-label').textContent = state.halted ? 'MACHINE HALTED' : 'NEXT INSTRUCTION';
   $('next-instruction').textContent = `${hex(state.registers[0])}  ${decode(state.memory, state.registers[0])}`;
@@ -208,6 +245,43 @@ function describe(before: State, after: State): string {
     default: return '';
   }
 }
+function renderTrace() {
+  const root = $('trace');
+  root.replaceChildren();
+  if (!trace.latest) {
+    const empty = document.createElement('p');
+    empty.className = 'trace-empty'; empty.textContent = 'Each step leaves a trail here.';
+    root.append(empty);
+    return;
+  }
+  for (const entry of trace.visible) {
+    const row = document.createElement('div'); row.className = 'trace-entry';
+    for (const [tag, content, className] of [
+      ['span', String(entry.step).padStart(2, '0'), ''],
+      ['span', hex(entry.pc), ''], ['code', entry.instruction, ''], ['span', entry.changes, 'diff'],
+    ]) {
+      const element = document.createElement(tag!);
+      element.textContent = content!; element.className = className!; row.append(element);
+    }
+    row.title = entry.description; root.append(row);
+  }
+}
+function stepBack() {
+  if (!ready || !state || dirty || state.historyDepth === 0) return;
+  stop();
+  const before = state;
+  try {
+    state = engine('back');
+    trace.back();
+    fault = false; error();
+    $('explanation').textContent = trace.latest?.description || 'Ready. Rewound to the initial machine state.';
+    setStatus(state.steps ? 'Paused' : 'Ready');
+    renderTrace(); render(before); scrollToState();
+  } catch (err) {
+    fault = true; error(err instanceof Error ? err.message : String(err), true);
+    setStatus('Execution stopped', true); controls(); scrollToState(true);
+  }
+}
 function step() {
   if (!state || state.halted || dirty || fault) return;
   const before = state;
@@ -215,27 +289,18 @@ function step() {
     validateStep(before);
     state = engine('step');
     const pc = before.registers[0];
-    lastRead = before.memory[pc] === 1 ? before.memory[pc + 2] : undefined;
-    lastWrite = before.memory[pc] === 2 ? before.memory[pc + 2] : undefined;
+    const read = before.memory[pc] === 1 ? before.memory[pc + 2] : undefined;
+    const write = before.memory[pc] === 2 ? before.memory[pc + 2] : undefined;
     const description = describe(before, state);
     $('explanation').textContent = description;
-    $('trace').querySelector('.trace-empty')?.remove();
-    const row = document.createElement('div'); row.className = 'trace-entry';
     const differences: string[] = [];
     for (const i of [1, 2]) if (before.registers[i] !== state.registers[i]) differences.push(`r${i}: ${before.registers[i]} → ${state.registers[i]}`);
-    if (lastWrite !== undefined) differences.push(`M[${hex(lastWrite)}]: ${before.memory[lastWrite]} → ${state.memory[lastWrite]}`);
+    if (write !== undefined) differences.push(`M[${hex(write)}]: ${before.memory[write]} → ${state.memory[write]}`);
     if (before.memory[pc] === 255) differences.push(`halt · output ${state.memory[0]}`);
     if (!differences.length) differences.push(`PC → ${hex(state.registers[0])}`);
-    for (const [tag, content, className] of [
-      ['span', String(state.steps).padStart(2, '0'), ''],
-      ['span', hex(pc), ''],
-      ['code', decode(before.memory, pc), ''],
-      ['span', differences.join(' · '), 'diff'],
-    ]) {
-      const element = document.createElement(tag!); element.textContent = content!; element.className = className!; row.append(element);
-    }
-    row.title = description; $('trace').prepend(row);
-    while ($('trace').children.length > 100) $('trace').lastElementChild?.remove();
+    trace.push({ step: state.steps, pc, instruction: decode(before.memory, pc),
+      changes: differences.join(' · '), description, read, write });
+    renderTrace();
     if (state.halted) {
       stop();
       const passed = expected === undefined || state.memory[0] === expected;
@@ -266,18 +331,20 @@ function scrollToState(showFault = false) {
   const toolbar = document.querySelector<HTMLElement>('.toolbar')!;
   const top = panel.getBoundingClientRect().top;
   const offset = toolbar.getBoundingClientRect().height + 16;
-  // Leave the page alone if the state heading is already visible below the controls.
-  if (top >= offset && top + 40 <= innerHeight) return;
+  // Keep the state near the controls, rather than barely visible at the bottom.
+  if (top >= offset - 1 && top <= offset + 48) return;
   window.scrollTo({
     top: window.scrollY + top - offset,
     behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
   });
 }
 select.addEventListener('change', populate);
+$('memory-toggle').addEventListener('click', () => { memoryExpanded = !memoryExpanded; renderMemory(); });
 source.addEventListener('input', markDirty);
 inputs.forEach(input => input.addEventListener('input', markDirty));
 assembleButton.addEventListener('click', load);
 stepButton.addEventListener('click', () => { step(); scrollToState(); });
+backButton.addEventListener('click', stepBack);
 runButton.addEventListener('click', () => {
   if (running) { stop(); setStatus('Paused'); }
   else { running = true; runStart = state?.steps || 0; setStatus('Running'); controls(); tick(); scrollToState(); }
@@ -285,8 +352,9 @@ runButton.addEventListener('click', () => {
 resetButton.addEventListener('click', () => {
   if (!baseline) return;
   // Reset uses the loaded image; unassembled edits stay in the editor.
-  stop(); state = engine('reset', baseline); fault = false; lastRead = lastWrite = undefined;
-  error(); $('trace').replaceChildren(); $('explanation').textContent = dirty ? 'Loaded program reset. Assemble to apply your editor changes.' : 'Reset to the loaded program and initial memory.';
+  stop(); state = engine('reset', baseline); fault = false;
+  trace = new ExecutionTrace(state.historyLimit);
+  error(); renderTrace(); $('explanation').textContent = dirty ? 'Loaded program reset. Assemble to apply your editor changes.' : 'Reset to the loaded program and initial memory.';
   setStatus(dirty ? 'Changes to load' : 'Ready'); render();
 });
 $<HTMLInputElement>('speed').addEventListener('input', event => { $('speed-value').textContent = `${(event.target as HTMLInputElement).value} steps/s`; });

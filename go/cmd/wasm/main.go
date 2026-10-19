@@ -10,7 +10,7 @@ import (
 	"vm"
 )
 
-var machine *vm.Machine
+var machine *vm.Debugger
 
 // JSON keeps the Go/browser boundary explicit and avoids shared mutable views.
 func call(_ js.Value, args []js.Value) (result any) {
@@ -28,12 +28,17 @@ func call(_ js.Value, args []js.Value) (result any) {
 		}
 		memory := make([]byte, 256)
 		js.CopyBytesToGo(memory, input)
-		machine = vm.NewMachine(memory)
+		machine = vm.NewDebugger(memory)
 	case "step":
 		if machine == nil {
 			panic("load a program first")
 		}
 		machine.Step()
+	case "back":
+		if machine == nil {
+			panic("load a program first")
+		}
+		machine.Back()
 	default:
 		panic("unknown VM command")
 	}
@@ -45,6 +50,7 @@ func call(_ js.Value, args []js.Value) (result any) {
 	data, _ := json.Marshal(map[string]any{
 		"memory": memory, "registers": machine.Registers,
 		"halted": machine.Halted, "steps": machine.Steps,
+		"historyDepth": machine.HistoryDepth(), "historyLimit": vm.HistoryLimit,
 	})
 	return string(data)
 }
