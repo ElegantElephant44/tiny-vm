@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Step inside a tiny 8-bit virtual machine. Assemble programs and watch Go-powered execution in your browser.">
+  <title>Tiny VM · machine explorer</title>
+  <link rel="stylesheet" href="./style.css">
+  <script src="./wasm_exec.js"></script>
+  <script type="module" src="./main.js"></script>
+</head>
+<body>
+<div class="shell">
+  <header class="masthead">
+    <div class="brand"><span class="brand-mark" aria-hidden="true">&gt;_</span><div><h1>Tiny VM <span>/ machine explorer</span></h1><p>256 bytes. Two registers. One instruction at a time.</p></div></div>
+    <span class="engine"><span class="engine-dot"></span> Go → WebAssembly</span>
+  </header>
+  <main>
+    <div class="toolbar">
+      <div class="transport"><button id="run" class="primary" disabled>▶ Run</button><button id="step" disabled>Step →</button><button id="reset" disabled>↺ Reset</button></div>
+      <label class="speed" for="speed">Speed <input id="speed" type="range" min="1" max="12" value="2"><output id="speed-value">2 steps/s</output></label>
+      <div class="runtime"><span id="status" class="status" aria-live="polite">Loading Go engine…</span><span><b id="step-count">0</b> instructions</span></div>
+    </div>
+    <div class="workspace">
+      <aside class="program-panel">
+        <section class="example-section">
+          <div class="section-heading"><h2>Program</h2><span class="eyebrow">01 / ASSEMBLE</span></div>
+          <label class="sr-only" for="example">Example program</label><select id="example"></select>
+          <p id="example-description" class="description"></p>
+          <div class="editor-heading"><label for="source">Assembly</label><span>editable · ; comments</span></div>
+          <textarea id="source" wrap="off" spellcheck="false" autocapitalize="off" aria-describedby="editor-help"></textarea>
+          <p id="editor-help" class="editor-help">r1, r2 · decimal or 0x hex · signed branch offsets</p>
+          <div class="initial-heading">Initial memory <span>decimal · 0–255</span></div>
+          <div class="inputs">
+            <label for="input-0">M[00] <span>output</span><input id="input-0" type="number" min="0" max="255" value="0"></label>
+            <label for="input-1">M[01] <span>input</span><input id="input-1" type="number" min="0" max="255" value="3"></label>
+            <label for="input-2">M[02] <span>input</span><input id="input-2" type="number" min="0" max="255" value="5"></label>
+          </div>
+          <button id="assemble" class="assemble" disabled>Assemble & load <span>↗</span></button>
+          <p id="error" class="error" role="alert" hidden></p>
+        </section>
+
+      </aside>
+      <div class="machine-panel">
+        <section class="register-section">
+          <div class="section-heading"><h2>Machine state</h2><span class="eyebrow">02 / EXECUTE</span></div>
+          <p id="runtime-error" class="error" role="alert" hidden></p>
+          <div class="registers">
+            <div class="register" id="reg-0"><span class="reg-label">PC <span>program counter</span></span><strong id="pc">08</strong><span class="reg-sub" id="pc-sub">address 8</span></div>
+            <div class="register" id="reg-1"><span class="reg-label">r1 <span>register</span></span><strong id="r1">00</strong><span class="reg-sub" id="r1-sub">0 decimal</span></div>
+            <div class="register" id="reg-2"><span class="reg-label">r2 <span>register</span></span><strong id="r2">00</strong><span class="reg-sub" id="r2-sub">0 decimal</span></div>
+            <div class="register output-register" id="output-register"><span class="reg-label">M[00] <span>output</span></span><strong id="out">00</strong><span class="reg-sub" id="out-sub">0 decimal</span></div>
+          </div>
+          <div class="execution"><span id="execution-label">NEXT INSTRUCTION</span><code id="next-instruction">—</code><p id="explanation" aria-live="polite">Loading the machine…</p></div>
+        </section>
+        <section class="listing-section">
+          <div class="section-heading"><h2>Instructions</h2><span id="program-size" class="eyebrow">0 BYTES</span></div>
+          <div class="listing-head"><span>ADDR</span><span>BYTES</span><span>ASSEMBLY</span></div>
+          <div id="listing" class="listing" aria-label="Assembled instructions"></div>
+        </section>
+        <section class="memory-section">
+          <div class="section-heading"><h2>Memory <span>256 × 8 bits</span></h2><span class="eyebrow">HEX / 00–FF</span></div>
+          <div class="memory-container"><div id="memory" class="memory" role="group" aria-label="Memory bytes, hexadecimal"></div></div>
+          <div class="legend"><span><i class="key data-key"></i>Data 00–07</span><span><i class="key code-key"></i>Program</span><span><i class="key pc-key"></i>PC / operands</span><span><i class="key access-key"></i>Read</span><span><i class="key write-key"></i>Written</span></div>
+          <div id="inspector" class="inspector" aria-live="polite"></div>
+        </section>
+        <section class="trace-section">
+          <div class="section-heading"><h2>Execution trace</h2><span class="eyebrow">LATEST 100</span></div>
+          <div id="trace" class="trace" aria-label="Execution history"><p class="trace-empty">Each step leaves a trail here.</p></div>
+        </section>
+      </div>
+    </div>
+  </main>
+  <footer><span>CS Osvita / Homework 2</span><span>8-bit values · arithmetic wraps modulo 256 · execution stays in your browser</span></footer>
+</div>
+</body>
+</html>
