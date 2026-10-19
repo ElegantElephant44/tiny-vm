@@ -47,4 +47,10 @@ The Node tests execute the compiled Go WASM engine against every example and add
 - `go/vm.go`: shared Go engine (`Machine`, `NewMachine`, `Step`) and the original `compute` entry point.
 - `go/cmd/wasm/main.go`: browser bridge, restricted to the `js/wasm` build target.
 
-The generated `dist/` folder can also be served by a static host. VM execution and assembly stay in the browser. The UI optionally loads Google Fonts; system fonts are used when unavailable. No site has been published.
+## GitHub Pages
+
+The [hosted visualizer](https://elegantelephant44.github.io/tiny-vm/) is deployed by `.github/workflows/pages.yml` on pushes to `main`. The workflow installs Node and Go, runs the tests, builds the WebAssembly and TypeScript, and publishes only `dist/`.
+
+In the repository's **Settings → Pages**, the source must be **GitHub Actions**. You can also redeploy from the workflow's **Run workflow** button. All asset paths are relative, so the site works under the `/tiny-vm/` project path.
+
+The generated `dist/` folder can also be served by another static host. VM execution and assembly stay in the browser. The UI optionally loads Google Fonts; system fonts are used when unavailable.
